@@ -1,3 +1,5 @@
 flask
 opencv-python
 pytesseract
+gunicorn
+
