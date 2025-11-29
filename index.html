@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Parcel Delivery System</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-color: #f4f7f6;
+      --card-bg: #ffffff;
+      --primary: #4a90e2;
+      --text-color: #333;
+      --border-color: #e0e0e0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      margin: 0;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      font-weight: 600;
+      color: #2c3e50;
+    }
+
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background 0.2s;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    .btn-primary {
+      background-color: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background-color: #357abd;
+    }
+
+    .btn-secondary {
+      background-color: #95a5a6;
+      color: white;
+    }
+
+    .btn-success {
+      background-color: #2ecc71;
+      color: white;
+    }
+
+    .btn-danger {
+      background-color: #e74c3c;
+      color: white;
+    }
+
+    /* Drag & Drop Zone */
+    .upload-zone {
+      border: 2px dashed var(--primary);
+      border-radius: 10px;
+      padding: 40px;
+      text-align: center;
+      background-color: #eaf2f8;
+      cursor: pointer;
+      margin-bottom: 20px;
+      transition: background 0.3s;
+    }
+
+    .upload-zone:hover,
+    .upload-zone.dragover {
+      background-color: #d4e6f1;
+    }
+
+    .upload-zone p {
+      margin: 0;
+      color: var(--primary);
+      font-size: 1.1em;
+    }
+
+    /* Table */
+    .table-container {
+      background: var(--card-bg);
+      border-radius: 10px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+      overflow-x: auto;
+      padding: 20px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1000px;
+    }
+
+    th,
+    td {
+      padding: 12px 15px;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    th {
+      background-color: #f8f9fa;
+      font-weight: 600;
+      color: #555;
+    }
+
+    tr:hover {
+      background-color: #f1f1f1;
+    }
+
+    /* Editable Inputs */
+    .edit-input {
+      width: 100%;
+      padding: 5px;
+      border: 1px solid transparent;
+      background: transparent;
+      font-family: inherit;
+    }
+
+    .edit-input:focus {
+      border-color: var(--primary);
+      background: white;
+      outline: none;
+    }
+
+    .status-badge {
+      padding: 4px 8px;
+      border-radius: 12px;
+      font-size: 0.85em;
+      font-weight: 600;
+    }
+
+    .status-picked {
+      background-color: #d4edda;
+      color: #155724;
+    }
+
+    .status-notpicked {
+      background-color: #f8d7da;
+      color: #721c24;
+    }
+
+    .actions {
+      display: flex;
+      gap: 5px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="container">
+    <header>
+      <h1>Parcel Delivery System {% if archive_mode %}(Archive: {{ filename }}){% endif %}</h1>
+      <div class="controls">
+        {% if not archive_mode %}
+        <a href="/history" class="btn btn-secondary">View History</a>
+        <button onclick="sendBulk()" class="btn btn-success">Send Bulk Notifications</button>
+        <form action="/add_row" method="post" style="display:inline;">
+          <button type="submit" class="btn btn-primary">+ Add Empty Row</button>
+        </form>
+        {% else %}
+        <a href="/" class="btn btn-primary">Back to Dashboard</a>
+        {% endif %}
+      </div>
+    </header>
+
+    {% if not archive_mode %}
+    <div class="upload-zone" id="drop-zone">
+      <p>Drag & Drop Parcel Images Here (or click to upload)</p>
+      <input type="file" id="file-input" name="images" multiple style="display: none;">
+    </div>
+    {% endif %}
+
+    <div class="table-container">
+      <table id="parcelTable">
+        <thead>
+          <tr>
+            <th>S.No</th>
+            <th>Label ID</th>
+            <th>Roll No</th>
+            <th>Name</th>
+            <th>Phone</th>
+            <th>Company</th>
+            <th>AWB</th>
+            <th>Email</th>
+            <th>Status</th>
+            <th>Mail Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in table %}
+          <tr data-sno="{{ row['S.No'] }}">
+            <td>{{ row['S.No'] }}</td>
+            <td>{{ row['Label ID'] }}</td>
+            <td><input class="edit-input" name="Roll No" value="{{ row['Roll No'] }}"></td>
+            <td><input class="edit-input" name="Name" value="{{ row['Name'] }}"></td>
+            <td><input class="edit-input" name="Phone No" value="{{ row['Phone No'] }}"></td>
+            <td><input class="edit-input" name="Company" value="{{ row['Company'] }}"></td>
+            <td><input class="edit-input" name="AWB No" value="{{ row['AWB No'] }}"></td>
+            <td><input class="edit-input" name="Email" value="{{ row['Email'] }}"></td>
+            <td>
+              <span
+                class="status-badge {% if row['Picked'] == 'Picked' %}status-picked{% else %}status-notpicked{% endif %}">
+                {{ row['Picked'] }}
+              </span>
+            </td>
+            <td>{{ row['Mail Status'] }}</td>
+            <td class="actions">
+              <button class="btn btn-primary" style="padding: 5px 10px; font-size: 0.8em;"
+                onclick="saveRow(this.closest('tr').dataset.sno)">Save</button>
+              {% if row['Picked'] != 'Picked' %}
+              <button class="btn btn-success" style="padding: 5px 10px; font-size: 0.8em;"
+                onclick="markStatus(this.closest('tr').dataset.sno, 'Picked')">Pick</button>
+              {% else %}
+              <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 0.8em;"
+                onclick="markStatus(this.closest('tr').dataset.sno, 'Not Picked')">Unpick</button>
+              {% endif %}
+              <button class="btn btn-danger" style="padding: 5px 10px; font-size: 0.8em;"
+                onclick="deleteRow(this.closest('tr').dataset.sno)">X</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const archiveFilename = "{{ filename if archive_mode else '' }}";
+
+    // Drag & Drop Logic
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+
+    if (dropZone) {
+      dropZone.addEventListener('click', () => fileInput.click());
+
+      dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+      });
+
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        uploadFiles(files);
+      });
+
+      fileInput.addEventListener('change', () => {
+        uploadFiles(fileInput.files);
+      });
+    }
+
+    function uploadFiles(files) {
+      const formData = new FormData();
+      for (let i = 0; i < files.length; i++) {
+        formData.append('images', files[i]);
+      }
+
+      fetch('/', {
+        method: 'POST',
+        body: formData
+      }).then(() => window.location.reload());
+    }
+
+    // Row Actions
+    function saveRow(sno) {
+      const row = document.querySelector(`tr[data-sno='${sno}']`);
+      const inputs = row.querySelectorAll('.edit-input');
+      const data = {};
+      inputs.forEach(input => {
+        data[input.name] = input.value;
+      });
+
+      let url = `/update_row/${sno}`;
+      if (archiveFilename) {
+        url += `?filename=${archiveFilename}`;
+      }
+
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      }).then(res => res.json()).then(data => {
+        alert(data.message);
+        window.location.reload();
+      });
+    }
+
+    function markStatus(sno, status) {
+      let url = `/update_status/${sno}/${status}`;
+      if (archiveFilename) {
+        url += `?filename=${archiveFilename}`;
+      }
+      fetch(url, { method: 'POST' })
+        .then(() => window.location.reload());
+    }
+
+    function deleteRow(sno) {
+      if (confirm('Delete this row?')) {
+        let url = `/delete_row/${sno}`;
+        if (archiveFilename) {
+          url += `?filename=${archiveFilename}`;
+        }
+        fetch(url, { method: 'POST' })
+          .then(() => window.location.reload());
+      }
+    }
+
+    function sendBulk() {
+      if (confirm('Send notifications to all pending recipients?')) {
+        fetch('/send_bulk_pending', { method: 'POST' })
+          .then(res => res.json())
+          .then(data => {
+            alert(data.message);
+            window.location.reload();
+          });
+      }
+    }
+  </script>
+
+</body>
+
+</html>
