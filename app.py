@@ -16,7 +16,7 @@ from email.mime.multipart import MIMEMultipart
 
 # -------------------- CONFIG --------------------
 # Update this path if Tesseract is installed elsewhere
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
 
 # SMTP CONFIGURATION
 SMTP_EMAIL = "harijawaharh2@gmail.com"  # REPLACE THIS
@@ -442,3 +442,4 @@ def uploaded_file(filename):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
+
