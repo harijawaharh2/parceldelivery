@@ -1,121 +1,295 @@
+# app.py  -- use DEEPSEEK ONLY for OCR (robust wrapper)
 import os
 import re
 import csv
+import json
 import logging
 import shutil
+import subprocess
 from datetime import datetime
 from collections import defaultdict
+from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for
 from werkzeug.utils import secure_filename
-import cv2
-import pytesseract
-
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# -------------------- CONFIG --------------------
-# Update this path if Tesseract is installed elsewhere
+# -------------------- CONFIG (from environment) --------------------
+UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "uploads")
+ARCHIVE_FOLDER = os.environ.get("ARCHIVE_FOLDER", "archive")
+DATA_FILE = os.environ.get("DATA_FILE", "data.csv")
+CONTACT_FILE = os.environ.get("CONTACT_FILE", "contact.csv")
+LAST_RUN_FILE = os.environ.get("LAST_RUN_FILE", "last_run_date.txt")
 
+# Email config (set these in Render / env; do NOT commit secrets)
+SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", 587))
 
-# SMTP CONFIGURATION
-SMTP_EMAIL = "harijawaharh2@gmail.com"  # REPLACE THIS
-SMTP_PASSWORD = "cliw jusn mghj ygcc"  # REPLACE THIS
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
+# DeepSeek config (set one of these)
+# Example: DEEPSEEK_CMD="deepseek-infer --model /models/deepseek"
+DEEPSEEK_CMD = os.environ.get("DEEPSEEK_CMD", "").strip()
+# OR point to a python script inside your repo: DEEPSEEK_SCRIPT="DeepSeek-OCR/infer.py"
+DEEPSEEK_SCRIPT = os.environ.get("DEEPSEEK_SCRIPT", "").strip()
+# As last option you can use Hugging Face Inference API (requires HF_TOKEN) and
+# DEEPSEEK_HF_MODEL should be set to HF repo (e.g. "deepseek-ai/DeepSeek-OCR")
+DEEPSEEK_HF_MODEL = os.environ.get("DEEPSEEK_HF_MODEL", "").strip()
+HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
 
-app = Flask(__name__)
-app.config["UPLOAD_FOLDER"] = "uploads"
-app.config["ARCHIVE_FOLDER"] = "archive"
-os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
-os.makedirs(app.config["ARCHIVE_FOLDER"], exist_ok=True)
+# Timeout for calling external DeepSeek processes (seconds)
+DEEPSEEK_TIMEOUT = int(os.environ.get("DEEPSEEK_TIMEOUT", 60))
 
-DATA_FILE = "data.csv"
-CONTACT_FILE = "contact.csv"  # Expected: Name,phno,rollno,email
-LAST_RUN_FILE = "last_run_date.txt"
-
+# CSV fields
 FIELDNAMES = [
     "S.No", "Label ID", "Roll No", "Name", "Company", "AWB No",
     "Email", "Phone No", "Time", "Parcel No", "Picked", "Signature",
     "Status", "Mail Status", "Mail Time"
 ]
 
-logging.basicConfig(level=logging.INFO)
+# Create folders
+Path(UPLOAD_FOLDER).mkdir(parents=True, exist_ok=True)
+Path(ARCHIVE_FOLDER).mkdir(parents=True, exist_ok=True)
 
-# -------------------- EMAIL UTILS --------------------
+# Flask app
+app = Flask(__name__, static_folder=None)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["ARCHIVE_FOLDER"] = ARCHIVE_FOLDER
+
+# Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("deepseek-app")
+
+# -------------------- EMAIL UTIL --------------------
 def send_email_real(to_email, subject, body):
-    if "your_email" in SMTP_EMAIL:
-        return False, "SMTP credentials not set."
-        
+    if not SMTP_EMAIL or not SMTP_PASSWORD:
+        logger.warning("SMTP not configured; skipping email send.")
+        return False, "SMTP not configured"
     try:
         msg = MIMEMultipart()
         msg['From'] = SMTP_EMAIL
         msg['To'] = to_email
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
-        
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30)
         server.starttls()
-        server.login(SMTP_EMAIL.strip(), SMTP_PASSWORD.replace(" ", "").strip())
-        text = msg.as_string()
-        server.sendmail(SMTP_EMAIL, to_email, text)
+        server.login(SMTP_EMAIL.strip(), SMTP_PASSWORD.strip())
+        server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
         server.quit()
-        logging.info(f"Email sent to {to_email}")
+        logger.info("Email sent to %s", to_email)
         return True, None
     except Exception as e:
-        error_msg = str(e)
-        logging.error(f"Failed to send email to {to_email}: {error_msg}")
-        return False, error_msg
+        logger.exception("Failed to send email")
+        return False, str(e)
 
-# -------------------- OCR + CLASSIFICATION --------------------
+# -------------------- DeepSeek OCR wrapper (DEEPSEEK ONLY) --------------------
+def deepseek_call_cli(image_path):
+    """
+    Execute DEEPSEEK_CMD with image path appended (if DEEPSEEK_CMD provided).
+    e.g. DEEPSEEK_CMD="deepseek-infer --model /models/deepseek"
+    Actual command executed: <DEEPSEEK_CMD> --image <image_path>
+    """
+    if not DEEPSEEK_CMD:
+        return None
+    # build list - split DEEPSEEK_CMD to argv list safely
+    try:
+        base_args = DEEPSEEK_CMD.split()
+        # Common CLI flag names vary; we'll append common flags and try multiple shapes
+        attempts = []
+        # 1) append explicit flag
+        attempts.append(base_args + ["--image", image_path])
+        # 2) append positional
+        attempts.append(base_args + [image_path])
+        # 3) explicit -i
+        attempts.append(base_args + ["-i", image_path])
+        for args in attempts:
+            try:
+                logger.debug("Trying DeepSeek CLI: %s", " ".join(args))
+                proc = subprocess.run(args, capture_output=True, text=True, timeout=DEEPSEEK_TIMEOUT)
+                if proc.returncode != 0:
+                    logger.debug("DeepSeek CLI returned %d; stderr: %.200s", proc.returncode, proc.stderr)
+                    continue
+                stdout = proc.stdout.strip()
+                if stdout:
+                    # Try parse JSON first (some deepseek scripts output JSON)
+                    try:
+                        parsed = json.loads(stdout)
+                        # Common key names -> try to extract text
+                        for key in ("text", "ocr_text", "result", "pred", "output"):
+                            if isinstance(parsed, dict) and key in parsed:
+                                val = parsed[key]
+                                return str(val)
+                        # if parsed is stringish
+                        return stdout
+                    except Exception:
+                        # not JSON, return raw stdout
+                        return stdout
+            except subprocess.TimeoutExpired:
+                logger.warning("DeepSeek CLI attempt timed out for args: %s", args)
+                continue
+            except FileNotFoundError:
+                logger.error("DeepSeek CLI command not found: %s", args[0])
+                break
+        return None
+    except Exception:
+        logger.exception("Error while attempting DeepSeek CLI")
+        return None
 
-# -------------------- OCR + CLASSIFICATION --------------------
-def preprocess_image(path):
-    img = cv2.imread(path)
-    if img is None:
-        raise ValueError(f"Cannot read image: {path}")
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    return gray
+def deepseek_call_script(image_path):
+    """
+    Try running a local python script (DEEPSEEK_SCRIPT). We'll try:
+    python <script> --image <image_path>
+    """
+    if not DEEPSEEK_SCRIPT:
+        return None
+    try:
+        script_args = ["python", DEEPSEEK_SCRIPT, "--image", image_path]
+        logger.debug("Trying DeepSeek script: %s", " ".join(script_args))
+        proc = subprocess.run(script_args, capture_output=True, text=True, timeout=DEEPSEEK_TIMEOUT)
+        if proc.returncode != 0:
+            logger.debug("DeepSeek script returned %d; stderr: %.200s", proc.returncode, proc.stderr)
+            # try positional
+            proc2 = subprocess.run(["python", DEEPSEEK_SCRIPT, image_path], capture_output=True, text=True, timeout=DEEPSEEK_TIMEOUT)
+            if proc2.returncode != 0:
+                logger.debug("DeepSeek script (positional) returned %d", proc2.returncode)
+                return None
+            out = proc2.stdout.strip()
+        else:
+            out = proc.stdout.strip()
+        if not out:
+            return None
+        try:
+            parsed = json.loads(out)
+            for key in ("text", "ocr_text", "result", "pred"):
+                if key in parsed:
+                    return str(parsed[key])
+            return out
+        except Exception:
+            return out
+    except FileNotFoundError:
+        logger.error("Python interpreter not found when invoking DeepSeek script.")
+        return None
+    except subprocess.TimeoutExpired:
+        logger.warning("DeepSeek script timed out.")
+        return None
+    except Exception:
+        logger.exception("Error calling DeepSeek script")
+        return None
 
-def ocr_extract(path):
-    gray = preprocess_image(path)
-    text = pytesseract.image_to_string(gray)
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
-    return text, lines
+def deepseek_call_hf_inference(image_path):
+    """
+    Last-resort: call Hugging Face Inference API for a model (DEEPSEEK_HF_MODEL).
+    Requires HF_TOKEN in env. Will POST the image bytes to the inference endpoint.
+    """
+    if not DEEPSEEK_HF_MODEL or not HF_TOKEN:
+        return None
+    try:
+        import requests
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        url = f"https://api-inference.huggingface.co/models/{DEEPSEEK_HF_MODEL}"
+        with open(image_path, "rb") as fh:
+            data = fh.read()
+        logger.debug("Calling HF inference for model %s", DEEPSEEK_HF_MODEL)
+        resp = requests.post(url, headers=headers, data=data, timeout=DEEPSEEK_TIMEOUT)
+        if resp.status_code != 200:
+            logger.warning("HF inference returned %d: %.200s", resp.status_code, resp.text)
+            return None
+        # HF may return JSON with outputs or plain text
+        try:
+            j = resp.json()
+            # try to extract fields
+            if isinstance(j, dict):
+                for k in ("text", "ocr_text", "result"):
+                    if k in j:
+                        return str(j[k])
+            # fallback to raw text if available
+            if isinstance(j, str):
+                return j
+            # or join textual items
+            if isinstance(j, list):
+                texts = []
+                for part in j:
+                    if isinstance(part, dict) and "text" in part:
+                        texts.append(part["text"])
+                if texts:
+                    return "\n".join(texts)
+            return json.dumps(j)
+        except Exception:
+            return resp.text
+    except Exception:
+        logger.exception("HF inference call failed")
+        return None
 
+def deepseek_ocr(image_path):
+    """
+    Master wrapper: calls in order:
+     1) DEEPSEEK_CMD CLI (if set)
+     2) DEEPSEEK_SCRIPT python script (if set)
+     3) Hugging Face Inference (if set)
+    Returns (raw_text, lines_list). If no method succeeds, returns ("", []).
+    """
+    logger.info("Running DeepSeek OCR for %s", image_path)
+    # 1) CLI
+    if DEEPSEEK_CMD:
+        try:
+            out = deepseek_call_cli(image_path)
+            if out:
+                lines = [l.strip() for l in out.splitlines() if l.strip()]
+                return out, lines
+        except Exception:
+            logger.exception("DeepSeek CLI attempt failed unexpectedly.")
+    # 2) script
+    if DEEPSEEK_SCRIPT:
+        try:
+            out = deepseek_call_script(image_path)
+            if out:
+                lines = [l.strip() for l in out.splitlines() if l.strip()]
+                return out, lines
+        except Exception:
+            logger.exception("DeepSeek script attempt failed unexpectedly.")
+    # 3) HF inference
+    if DEEPSEEK_HF_MODEL and HF_TOKEN:
+        try:
+            out = deepseek_call_hf_inference(image_path)
+            if out:
+                lines = [l.strip() for l in out.splitlines() if l.strip()]
+                return out, lines
+        except Exception:
+            logger.exception("DeepSeek HF attempt failed unexpectedly.")
+    # If nothing worked, log and return blank (do NOT fallback to other OCRs)
+    logger.error("DeepSeek not available or all attempts failed. Check DEEPSEEK_CMD/DEEPSEEK_SCRIPT/DEEPSEEK_HF_MODEL.")
+    return "", []
+
+# -------------------- CLASSIFICATION/HEURISTICS --------------------
 def classify_lines(lines):
     name = company = phone = awb = rollno = None
     cleaned = [re.sub(r'[^a-zA-Z0-9\s,+-.]', '', l).strip() for l in lines if len(l.strip()) > 2]
-
     for line in cleaned:
-        # AWB
+        # AWB (10-15 digits)
         if not awb and re.search(r'\b\d{10,15}\b', line):
-            awb = re.findall(r'\b\d{10,15}\b', line)[0]
+            awb = re.search(r'\b\d{10,15}\b', line).group(0)
             continue
-        # PHONE
-        if not phone and re.search(r'(\+91|91)?\s?\d{10}\b', line):
-            phone = re.findall(r'\d{10}\b', line)[0]
+        # PHONE (India-style check, generic 10-digit)
+        if not phone and re.search(r'(\+?91|0)?\s?\d{10}\b', line):
+            phone = re.search(r'\d{10}\b', line).group(0)
             continue
-        # ROLL NO (Heuristic: 10 chars, starts with digit, e.g., 21691A3155)
+        # ROLL NO heuristic
         if not rollno and re.search(r'\b\d{2}[A-Z0-9]{8}\b', line, re.IGNORECASE):
-            rollno = re.findall(r'\b\d{2}[A-Z0-9]{8}\b', line, re.IGNORECASE)[0]
+            rollno = re.search(r'\b\d{2}[A-Z0-9]{8}\b', line, re.IGNORECASE).group(0)
             continue
-        # COMPANY
-        if not company and any(x in line.lower() for x in
-                               ["flipkart", "ekart", "delhivery", "amazon",
-                                "bluedart", "xpressbees", "ecom", "shadowfax"]):
+        # COMPANY keywords
+        if not company and any(x in line.lower() for x in ["flipkart", "ekart", "delhivery", "amazon", "bluedart", "xpressbees", "ecom", "shadowfax"]):
             company = line
             continue
-        # NAME
-        if not name and re.match(r'^[A-Za-z][A-Za-z\s.]{2,30}$', line):
+        # NAME (simple)
+        if not name and re.match(r'^[A-Za-z][A-Za-z\s.]{2,40}$', line):
             name = line.strip()
-
     return {
-        "Name": name or "Not Found",
-        "Company": company or "Not Found",
-        "Phone No": phone or "Not Found",
-        "AWB No": awb or "Not Found",
+        "Name": name or "",
+        "Company": company or "",
+        "Phone No": phone or "",
+        "AWB No": awb or "",
         "Roll No": rollno or ""
     }
 
@@ -142,30 +316,23 @@ def write_csv(rows, file_path=DATA_FILE):
         writer.writerows(normalized)
 
 def get_recipient_details(query_val):
-    """
-    Lookup recipient details by Roll No or Phone No in CONTACT_FILE.
-    """
     if not query_val:
         return None
     if not os.path.exists(CONTACT_FILE):
         return None
-    
     query_val = str(query_val).strip().lower()
-    
     with open(CONTACT_FILE, newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
             r_roll = row.get("rollno", "").strip().lower()
             r_phone = row.get("phno", "").strip().lower()
-            
-            # Check for match
             if (r_roll and query_val == r_roll) or (r_phone and query_val in r_phone):
-                 return {
-                     "Name": row.get("Name", ""),
-                     "Email": row.get("email", ""),
-                     "Roll No": row.get("rollno", ""),
-                     "Phone No": row.get("phno", "")
-                 }
+                return {
+                    "Name": row.get("Name", ""),
+                    "Email": row.get("email", ""),
+                    "Roll No": row.get("rollno", ""),
+                    "Phone No": row.get("phno", "")
+                }
     return None
 
 def check_daily_reset():
@@ -174,55 +341,43 @@ def check_daily_reset():
     if os.path.exists(LAST_RUN_FILE):
         with open(LAST_RUN_FILE, "r") as f:
             last_run = f.read().strip()
-            
     if last_run and last_run != today_str:
         if os.path.exists(DATA_FILE):
             rows = read_csv()
             if rows:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 archive_name = f"data_{last_run}_{timestamp}.csv"
-                archive_path = os.path.join(app.config["ARCHIVE_FOLDER"], archive_name)
+                archive_path = os.path.join(ARCHIVE_FOLDER, archive_name)
                 shutil.copy(DATA_FILE, archive_path)
-                logging.info(f"Archived data to {archive_path}")
-                
-                # Clear data file
+                logger.info("Archived data to %s", archive_path)
                 with open(DATA_FILE, "w", newline='', encoding='utf-8') as f:
                     writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
                     writer.writeheader()
-        
     with open(LAST_RUN_FILE, "w") as f:
         f.write(today_str)
 
 def append_to_csv(data):
     check_daily_reset()
     rows = read_csv()
-    
-    # Label ID: YYYYMMDD-Serial
     today_compact = datetime.now().strftime("%Y%m%d")
     serial = len(rows) + 1
     label_id = f"{today_compact}-{serial:04d}"
-    
     s_no = str(len(rows) + 1)
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Match Recipient
     match = None
     if data.get("Roll No"):
         match = get_recipient_details(data["Roll No"])
     if not match and data.get("Phone No"):
         match = get_recipient_details(data["Phone No"])
-        
     final_name = data.get("Name", "")
     final_email = data.get("Email", "")
     final_phone = data.get("Phone No", "")
     final_roll = data.get("Roll No", "")
-    
     if match:
         final_name = match["Name"] or final_name
         final_email = match["Email"] or final_email
         final_phone = match["Phone No"] or final_phone
         final_roll = match["Roll No"] or final_roll
-
     entry = {
         "S.No": s_no,
         "Label ID": label_id,
@@ -256,18 +411,14 @@ def index():
             filename = secure_filename(f.filename)
             filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
             f.save(filepath)
-
             try:
-                text, lines = ocr_extract(filepath)
+                raw_text, lines = deepseek_ocr(filepath)
                 parsed = classify_lines(lines)
             except Exception as e:
-                logging.exception("OCR error:")
-                parsed = {"Name": "Not Found", "Company": "Not Found", "Phone No": "", "AWB No": ""}
-
+                logger.exception("DeepSeek OCR error for %s", filepath)
+                parsed = {"Name": "", "Company": "", "Phone No": "", "AWB No": "", "Roll No": ""}
             append_to_csv(parsed)
-
         return redirect(url_for("index"))
-
     table = read_csv()
     return render_template("index.html", table=table)
 
@@ -275,39 +426,26 @@ def index():
 def update_row(sno):
     data = request.get_json() or {}
     filename = request.args.get("filename")
-    
-    if filename:
-        file_path = os.path.join(app.config["ARCHIVE_FOLDER"], filename)
-    else:
-        file_path = DATA_FILE
-        
+    file_path = os.path.join(app.config["ARCHIVE_FOLDER"], filename) if filename else DATA_FILE
     rows = read_csv(file_path)
     updated = False
-    
     for row in rows:
         if row.get("S.No") == sno:
-            # Update fields
             for k, v in data.items():
                 if k in FIELDNAMES:
                     row[k] = v
-            
-            # Auto-fill if Roll No or Phone No changed (only for main data or if desired for archive too)
-            # Assuming we want this behavior for archives too
             match = None
             if data.get("Roll No"):
                 match = get_recipient_details(data["Roll No"])
             elif data.get("Phone No"):
                 match = get_recipient_details(data["Phone No"])
-            
             if match:
                 row["Name"] = match["Name"] or row["Name"]
                 row["Email"] = match["Email"] or row["Email"]
                 row["Roll No"] = match["Roll No"] or row["Roll No"]
                 row["Phone No"] = match["Phone No"] or row["Phone No"]
-            
             updated = True
             break
-            
     if updated:
         write_csv(rows, file_path)
         return jsonify({"message": f"Row {sno} updated."})
@@ -316,12 +454,7 @@ def update_row(sno):
 @app.route("/update_status/<sno>/<status>", methods=["POST"])
 def update_status(sno, status):
     filename = request.args.get("filename")
-    
-    if filename:
-        file_path = os.path.join(app.config["ARCHIVE_FOLDER"], filename)
-    else:
-        file_path = DATA_FILE
-
+    file_path = os.path.join(app.config["ARCHIVE_FOLDER"], filename) if filename else DATA_FILE
     rows = read_csv(file_path)
     updated = False
     for row in rows:
@@ -337,15 +470,9 @@ def update_status(sno, status):
 @app.route("/delete_row/<sno>", methods=["POST"])
 def delete_row(sno):
     filename = request.args.get("filename")
-    
-    if filename:
-        file_path = os.path.join(app.config["ARCHIVE_FOLDER"], filename)
-    else:
-        file_path = DATA_FILE
-
+    file_path = os.path.join(app.config["ARCHIVE_FOLDER"], filename) if filename else DATA_FILE
     rows = read_csv(file_path)
     rows = [r for r in rows if r.get("S.No") != sno]
-    # Reindex
     for i, r in enumerate(rows, start=1):
         r["S.No"] = str(i)
     write_csv(rows, file_path)
@@ -358,7 +485,6 @@ def add_row():
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     today_compact = datetime.now().strftime("%Y%m%d")
     label_id = f"{today_compact}-{len(rows)+1:04d}"
-    
     empty_row = {k: "" for k in FIELDNAMES}
     empty_row.update({
         "S.No": s_no,
@@ -376,17 +502,13 @@ def add_row():
 def send_bulk_pending():
     rows = read_csv()
     pending_by_email = defaultdict(list)
-    
     for row in rows:
         if row.get("Mail Status") != "Sent" and row.get("Email"):
             pending_by_email[row["Email"]].append(row)
-            
     updated_snos = []
     failures = []
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
     for email, parcel_list in pending_by_email.items():
-        # Construct Email
         subject = f"Parcel Arrival Notification - {len(parcel_list)} Package(s)"
         body = f"Hello,\n\nYou have {len(parcel_list)} parcel(s) waiting at the university gate.\n\n"
         for p in parcel_list:
@@ -395,12 +517,8 @@ def send_bulk_pending():
             body += f"Company: {p.get('Company')}\n"
             body += f"Time: {p.get('Time')}\n\n"
         body += "Please collect them.\n\nRegards,\nSecurity"
-        
-        # Send Real Email
         success, error_msg = send_email_real(email, subject, body)
-        
         if success:
-            # Update Status
             for p in parcel_list:
                 for r in rows:
                     if r["S.No"] == p["S.No"]:
@@ -409,19 +527,13 @@ def send_bulk_pending():
                         updated_snos.append(r["S.No"])
         else:
             failures.append(f"{email}: {error_msg}")
-                    
     write_csv(rows)
-    
     msg = f"Sent notifications to {len(updated_snos)} parcels."
     if failures:
         msg += f"\n\nFailed ({len(failures)}):"
         for f in failures:
             msg += f"\n- {f}"
-            
-    return jsonify({
-        "message": msg,
-        "updated": updated_snos
-    })
+    return jsonify({"message": msg, "updated": updated_snos})
 
 @app.route("/history")
 def history():
@@ -440,6 +552,7 @@ def view_archive(filename):
 def uploaded_file(filename):
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
+# -------------------- RUN --------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
-
+    # In production use gunicorn; this is for local/dev testing.
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=os.environ.get("FLASK_DEBUG","0") == "1")
