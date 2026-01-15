@@ -1,351 +1,318 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-  <meta charset="UTF-8">
-  <title>Parcel Delivery System</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --bg-color: #f4f7f6;
-      --card-bg: #ffffff;
-      --primary: #4a90e2;
-      --text-color: #333;
-      --border-color: #e0e0e0;
-    }
-
-    body {
-      font-family: 'Inter', sans-serif;
-      background-color: var(--bg-color);
-      color: var(--text-color);
-      margin: 0;
-      padding: 20px;
-    }
-
-    .container {
-      max-width: 1400px;
-      margin: 0 auto;
-    }
-
-    header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-    }
-
-    h1 {
-      font-weight: 600;
-      color: #2c3e50;
-    }
-
-    .btn {
-      padding: 10px 20px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: 600;
-      transition: background 0.2s;
-      text-decoration: none;
-      display: inline-block;
-    }
-
-    .btn-primary {
-      background-color: var(--primary);
-      color: white;
-    }
-
-    .btn-primary:hover {
-      background-color: #357abd;
-    }
-
-    .btn-secondary {
-      background-color: #95a5a6;
-      color: white;
-    }
-
-    .btn-success {
-      background-color: #2ecc71;
-      color: white;
-    }
-
-    .btn-danger {
-      background-color: #e74c3c;
-      color: white;
-    }
-
-    /* Drag & Drop Zone */
-    .upload-zone {
-      border: 2px dashed var(--primary);
-      border-radius: 10px;
-      padding: 40px;
-      text-align: center;
-      background-color: #eaf2f8;
-      cursor: pointer;
-      margin-bottom: 20px;
-      transition: background 0.3s;
-    }
-
-    .upload-zone:hover,
-    .upload-zone.dragover {
-      background-color: #d4e6f1;
-    }
-
-    .upload-zone p {
-      margin: 0;
-      color: var(--primary);
-      font-size: 1.1em;
-    }
-
-    /* Table */
-    .table-container {
-      background: var(--card-bg);
-      border-radius: 10px;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-      overflow-x: auto;
-      padding: 20px;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      min-width: 1000px;
-    }
-
-    th,
-    td {
-      padding: 12px 15px;
-      text-align: left;
-      border-bottom: 1px solid var(--border-color);
-    }
-
-    th {
-      background-color: #f8f9fa;
-      font-weight: 600;
-      color: #555;
-    }
-
-    tr:hover {
-      background-color: #f1f1f1;
-    }
-
-    /* Editable Inputs */
-    .edit-input {
-      width: 100%;
-      padding: 5px;
-      border: 1px solid transparent;
-      background: transparent;
-      font-family: inherit;
-    }
-
-    .edit-input:focus {
-      border-color: var(--primary);
-      background: white;
-      outline: none;
-    }
-
-    .status-badge {
-      padding: 4px 8px;
-      border-radius: 12px;
-      font-size: 0.85em;
-      font-weight: 600;
-    }
-
-    .status-picked {
-      background-color: #d4edda;
-      color: #155724;
-    }
-
-    .status-notpicked {
-      background-color: #f8d7da;
-      color: #721c24;
-    }
-
-    .actions {
-      display: flex;
-      gap: 5px;
-    }
-  </style>
-</head>
-
-<body>
-
-  <div class="container">
-    <header>
-      <h1>Parcel Delivery System {% if archive_mode %}(Archive: {{ filename }}){% endif %}</h1>
-      <div class="controls">
-        {% if not archive_mode %}
-        <a href="/history" class="btn btn-secondary">View History</a>
-        <button onclick="sendBulk()" class="btn btn-success">Send Bulk Notifications</button>
-        <form action="/add_row" method="post" style="display:inline;">
-          <button type="submit" class="btn btn-primary">+ Add Empty Row</button>
-        </form>
-        {% else %}
-        <a href="/" class="btn btn-primary">Back to Dashboard</a>
-        {% endif %}
-      </div>
-    </header>
-
-    {% if not archive_mode %}
-    <div class="upload-zone" id="drop-zone">
-      <p>Drag & Drop Parcel Images Here (or click to upload)</p>
-      <input type="file" id="file-input" name="images" multiple style="display: none;">
-    </div>
-    {% endif %}
-
-    <div class="table-container">
-      <table id="parcelTable">
-        <thead>
-          <tr>
-            <th>S.No</th>
-            <th>Label ID</th>
-            <th>Roll No</th>
-            <th>Name</th>
-            <th>Phone</th>
-            <th>Company</th>
-            <th>AWB</th>
-            <th>Email</th>
-            <th>Status</th>
-            <th>Mail Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in table %}
-          <tr data-sno="{{ row['S.No'] }}">
-            <td>{{ row['S.No'] }}</td>
-            <td>{{ row['Label ID'] }}</td>
-            <td><input class="edit-input" name="Roll No" value="{{ row['Roll No'] }}"></td>
-            <td><input class="edit-input" name="Name" value="{{ row['Name'] }}"></td>
-            <td><input class="edit-input" name="Phone No" value="{{ row['Phone No'] }}"></td>
-            <td><input class="edit-input" name="Company" value="{{ row['Company'] }}"></td>
-            <td><input class="edit-input" name="AWB No" value="{{ row['AWB No'] }}"></td>
-            <td><input class="edit-input" name="Email" value="{{ row['Email'] }}"></td>
-            <td>
-              <span
-                class="status-badge {% if row['Picked'] == 'Picked' %}status-picked{% else %}status-notpicked{% endif %}">
-                {{ row['Picked'] }}
-              </span>
-            </td>
-            <td>{{ row['Mail Status'] }}</td>
-            <td class="actions">
-              <button class="btn btn-primary" style="padding: 5px 10px; font-size: 0.8em;"
-                onclick="saveRow(this.closest('tr').dataset.sno)">Save</button>
-              {% if row['Picked'] != 'Picked' %}
-              <button class="btn btn-success" style="padding: 5px 10px; font-size: 0.8em;"
-                onclick="markStatus(this.closest('tr').dataset.sno, 'Picked')">Pick</button>
-              {% else %}
-              <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 0.8em;"
-                onclick="markStatus(this.closest('tr').dataset.sno, 'Not Picked')">Unpick</button>
-              {% endif %}
-              <button class="btn btn-danger" style="padding: 5px 10px; font-size: 0.8em;"
-                onclick="deleteRow(this.closest('tr').dataset.sno)">X</button>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <script>
-    const archiveFilename = "{{ filename if archive_mode else '' }}";
-
-    // Drag & Drop Logic
-    const dropZone = document.getElementById('drop-zone');
-    const fileInput = document.getElementById('file-input');
-
-    if (dropZone) {
-      dropZone.addEventListener('click', () => fileInput.click());
-
-      dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropZone.classList.add('dragover');
-      });
-
-      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-
-      dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.classList.remove('dragover');
-        const files = e.dataTransfer.files;
-        uploadFiles(files);
-      });
-
-      fileInput.addEventListener('change', () => {
-        uploadFiles(fileInput.files);
-      });
-    }
-
-    function uploadFiles(files) {
-      const formData = new FormData();
-      for (let i = 0; i < files.length; i++) {
-        formData.append('images', files[i]);
-      }
-
-      fetch('/', {
-        method: 'POST',
-        body: formData
-      }).then(() => window.location.reload());
-    }
-
-    // Row Actions
-    function saveRow(sno) {
-      const row = document.querySelector(`tr[data-sno='${sno}']`);
-      const inputs = row.querySelectorAll('.edit-input');
-      const data = {};
-      inputs.forEach(input => {
-        data[input.name] = input.value;
-      });
-
-      let url = `/update_row/${sno}`;
-      if (archiveFilename) {
-        url += `?filename=${archiveFilename}`;
-      }
-
-      fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      }).then(res => res.json()).then(data => {
-        alert(data.message);
-        window.location.reload();
-      });
-    }
-
-    function markStatus(sno, status) {
-      let url = `/update_status/${sno}/${status}`;
-      if (archiveFilename) {
-        url += `?filename=${archiveFilename}`;
-      }
-      fetch(url, { method: 'POST' })
-        .then(() => window.location.reload());
-    }
-
-    function deleteRow(sno) {
-      if (confirm('Delete this row?')) {
-        let url = `/delete_row/${sno}`;
-        if (archiveFilename) {
-          url += `?filename=${archiveFilename}`;
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ParcelNotify Pro - Flask</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .tab-btn.active {
+            background-color: white;
+            color: #2563eb;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
         }
-        fetch(url, { method: 'POST' })
-          .then(() => window.location.reload());
-      }
-    }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans">
 
-    function sendBulk() {
-      if (confirm('Send notifications to all pending recipients?')) {
-        fetch('/send_bulk_pending', { method: 'POST' })
-          .then(res => res.json())
-          .then(data => {
-            alert(data.message);
-            window.location.reload();
-          });
-      }
-    }
-  </script>
+    <nav class="sticky top-0 z-40 bg-white border-b border-slate-200 px-4 h-16 flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-2 text-blue-600 font-bold text-xl">
+            <i class="fas fa-box-open"></i>
+            <span>ParcelNotify</span>
+        </div>
+        <div id="nav-tabs" class="flex bg-slate-100 p-1 rounded-xl">
+            <button onclick="switchTab('scanner')" class="tab-btn active px-4 py-1.5 rounded-lg text-sm font-bold transition-all">Input</button>
+            <button onclick="switchTab('students')" class="tab-btn text-slate-500 px-4 py-1.5 rounded-lg text-sm font-bold transition-all">Directory</button>
+            <button onclick="switchTab('history')" class="tab-btn text-slate-500 px-4 py-1.5 rounded-lg text-sm font-bold transition-all">History</button>
+        </div>
+    </nav>
 
+    <main class="max-w-4xl mx-auto p-4 sm:p-6">
+        <!-- MESSAGES -->
+        <div id="status-msg" class="hidden mb-6 p-4 rounded-xl border flex items-center gap-3 animate-in fade-in"></div>
+
+        <!-- SCANNER VIEW -->
+        <section id="tab-scanner" class="tab-content block">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h3 class="font-bold mb-4 text-slate-700 flex items-center gap-2">
+                        <i class="fas fa-camera text-blue-500"></i> Entry Method
+                    </h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <label class="cursor-pointer aspect-square rounded-xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center hover:bg-slate-50 hover:border-blue-300 transition-all group">
+                            <i class="fas fa-qrcode text-3xl text-slate-300 mb-2 group-hover:scale-110 transition-transform"></i>
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">AI Scan</span>
+                            <input type="file" accept="image/*" class="hidden" onchange="uploadImage(event)">
+                        </label>
+                        <button onclick="manualForm()" class="aspect-square rounded-xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center hover:bg-slate-50 hover:border-blue-300 transition-all group">
+                            <i class="fas fa-file-signature text-3xl text-slate-300 mb-2 group-hover:scale-110 transition-transform"></i>
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Manual</span>
+                        </button>
+                    </div>
+                    <div id="preview-container" class="mt-4 hidden">
+                        <img id="img-preview" src="" class="w-full rounded-xl border border-slate-200 aspect-video object-cover">
+                    </div>
+                </div>
+
+                <div id="log-details" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h3 class="font-bold mb-4 text-slate-700">Parcel Details</h3>
+                    <div id="form-container" class="space-y-4">
+                        <div class="text-center py-20 text-slate-400 opacity-60">
+                            <i class="fas fa-box text-4xl mb-4"></i>
+                            <p class="text-sm font-bold uppercase tracking-wider">Start Input</p>
+                            <p class="text-xs">Scan a label or choose manual entry</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- STUDENTS VIEW -->
+        <section id="tab-students" class="tab-content hidden">
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="p-6 border-b border-slate-100 flex justify-between items-center">
+                    <h2 class="font-bold text-lg">Student Directory</h2>
+                    <button onclick="showStudentModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 transition-all">
+                        <i class="fas fa-plus mr-2"></i> Add Student
+                    </button>
+                </div>
+                <div id="students-list" class="overflow-x-auto">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- HISTORY VIEW -->
+        <section id="tab-history" class="tab-content hidden">
+            <div id="history-list" class="space-y-6">
+                <!-- Grouped items -->
+            </div>
+        </section>
+    </main>
+
+    <script>
+        // Use absolute URLs to avoid "Failed to parse URL" errors in sandboxed/blob environments
+        const getUrl = (path) => {
+            try {
+                return new URL(path, window.location.origin).href;
+            } catch (e) {
+                return path;
+            }
+        };
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            
+            document.getElementById('tab-' + tabId).classList.remove('hidden');
+            event.target.classList.add('active');
+            
+            if(tabId === 'history') loadHistory();
+            if(tabId === 'students') loadStudents();
+        }
+
+        function showMessage(type, text) {
+            const el = document.getElementById('status-msg');
+            el.className = `mb-6 p-4 rounded-xl border flex items-center gap-3 animate-in fade-in ${
+                type === 'success' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'
+            }`;
+            el.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i><span class="text-sm font-medium">${text}</span>`;
+            el.classList.remove('hidden');
+            setTimeout(() => el.classList.add('hidden'), 5000);
+        }
+
+        async function uploadImage(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const preview = document.getElementById('img-preview');
+            preview.src = URL.createObjectURL(file);
+            document.getElementById('preview-container').classList.remove('hidden');
+
+            const container = document.getElementById('form-container');
+            container.innerHTML = `<div class="text-center py-20"><i class="fas fa-spinner fa-spin text-blue-600 text-2xl mb-2"></i><p class="text-xs font-bold text-slate-400">AI IS ANALYZING...</p></div>`;
+
+            const reader = new FileReader();
+            reader.onloadend = async () => {
+                const base64 = reader.result.split(',')[1];
+                try {
+                    const res = await fetch(getUrl('/api/scan'), {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({image: base64})
+                    });
+                    const data = await res.json();
+                    renderForm(data.ocr || {}, data.matched_student);
+                } catch (err) {
+                    showMessage('error', 'Failed to connect to AI service');
+                    manualForm();
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function manualForm() {
+            document.getElementById('preview-container').classList.add('hidden');
+            renderForm({}, null);
+        }
+
+        function renderForm(ocr, match) {
+            const container = document.getElementById('form-container');
+            container.innerHTML = `
+                <div class="space-y-4 animate-in slide-in-from-bottom-2">
+                    <div class="space-y-1">
+                        <label class="text-[10px] font-bold text-slate-400 uppercase">Recipient Name</label>
+                        <input id="f-name" value="${ocr.name || ''}" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" placeholder="e.g. Rahul Kumar">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-400 uppercase">Roll Number</label>
+                            <input id="f-roll" value="${ocr.rollNo || ''}" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="CS2301">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-400 uppercase">AWB/Tracking</label>
+                            <input id="f-awb" value="${ocr.awb || ''}" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="AWB123...">
+                        </div>
+                    </div>
+                    
+                    ${match ? `
+                        <div class="bg-green-50 border border-green-100 p-3 rounded-xl flex items-center gap-3">
+                            <i class="fas fa-check-circle text-green-500"></i>
+                            <div>
+                                <p class="text-sm font-bold text-green-800">${match.name}</p>
+                                <p class="text-[10px] text-green-600 font-bold uppercase">${match.email}</p>
+                            </div>
+                        </div>
+                    ` : `
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 text-[11px] text-slate-500">
+                            <i class="fas fa-info-circle mr-1"></i> No matching student found. Logging as guest.
+                        </div>
+                    `}
+                    
+                    <button onclick="confirmParcel(${match?.id || 'null'})" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all flex items-center justify-center gap-2">
+                        <i class="fas fa-paper-plane"></i> Log & Notify
+                    </button>
+                </div>
+            `;
+        }
+
+        async function confirmParcel(studentId) {
+            const payload = {
+                name: document.getElementById('f-name').value,
+                rollNo: document.getElementById('f-roll').value,
+                awb: document.getElementById('f-awb').value,
+                student_id: studentId
+            };
+
+            if(!payload.name) return showMessage('error', 'Name is required');
+
+            try {
+                const res = await fetch(getUrl('/api/parcels'), {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                showMessage('success', `Parcel logged as ${data.serial_no}`);
+                document.getElementById('form-container').innerHTML = `<div class="text-center py-20 text-slate-400 opacity-60"><i class="fas fa-check-circle text-4xl mb-4 text-green-500"></i><p class="text-xs font-bold uppercase">Success</p></div>`;
+                document.getElementById('preview-container').classList.add('hidden');
+            } catch (err) {
+                showMessage('error', 'Failed to save parcel');
+            }
+        }
+
+        async function loadHistory() {
+            const list = document.getElementById('history-list');
+            list.innerHTML = `<div class="text-center py-10"><i class="fas fa-spinner fa-spin text-blue-600"></i></div>`;
+            
+            try {
+                const res = await fetch(getUrl('/api/parcels'));
+                const groups = await res.json();
+                
+                if(Object.keys(groups).length === 0) {
+                    list.innerHTML = `<div class="text-center py-20 text-slate-300 border-2 border-dashed rounded-2xl"><i class="fas fa-history text-4xl mb-2"></i><p class="font-bold text-xs uppercase">No records found</p></div>`;
+                    return;
+                }
+
+                list.innerHTML = Object.entries(groups).map(([month, items]) => `
+                    <div class="space-y-3">
+                        <div class="flex items-center gap-4">
+                            <span class="text-[10px] font-bold uppercase text-slate-400 tracking-widest whitespace-nowrap">${month}</span>
+                            <div class="h-px w-full bg-slate-200"></div>
+                        </div>
+                        <div class="grid gap-3">
+                            ${items.map(p => `
+                                <div class="bg-white p-4 rounded-xl border border-slate-200 flex justify-between items-center shadow-sm hover:shadow-md transition-shadow">
+                                    <div class="flex gap-3 items-center">
+                                        <div class="bg-blue-50 text-blue-600 p-2.5 rounded-lg"><i class="fas fa-box"></i></div>
+                                        <div>
+                                            <div class="flex items-center gap-2 mb-0.5">
+                                                <span class="text-[9px] font-bold px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded font-mono uppercase">${p.serial_no}</span>
+                                                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase ${p.picked ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}">${p.status}</span>
+                                            </div>
+                                            <p class="font-bold text-sm text-slate-800">${p.name}</p>
+                                        </div>
+                                    </div>
+                                    <button onclick="markPick(${p.id})" class="text-[10px] font-bold uppercase tracking-widest px-4 py-2 rounded-lg transition-all ${
+                                        p.picked ? 'bg-slate-100 text-slate-500' : 'bg-blue-600 text-white shadow-lg shadow-blue-50'
+                                    }">
+                                        ${p.picked ? 'Undo' : 'Mark Picked'}
+                                    </button>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                list.innerHTML = `<div class="p-4 bg-red-50 text-red-700 rounded-xl text-sm">Error loading history.</div>`;
+            }
+        }
+
+        async function markPick(id) {
+            try {
+                await fetch(getUrl(`/api/parcels/${id}/pick`), {method: 'POST'});
+                loadHistory();
+            } catch (err) {
+                showMessage('error', 'Update failed');
+            }
+        }
+
+        async function loadStudents() {
+            const list = document.getElementById('students-list');
+            try {
+                const res = await fetch(getUrl('/api/students'));
+                const students = await res.json();
+                
+                list.innerHTML = `
+                    <table class="w-full text-left">
+                        <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500">
+                            <tr>
+                                <th class="px-6 py-4 tracking-wider">Student Info</th>
+                                <th class="px-6 py-4 tracking-wider">Roll</th>
+                                <th class="px-6 py-4 tracking-wider text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            ${students.map(s => `
+                                <tr class="hover:bg-slate-50 transition-colors text-sm">
+                                    <td class="px-6 py-4">
+                                        <p class="font-bold text-slate-800">${s.name}</p>
+                                        <p class="text-xs text-slate-400">${s.email}</p>
+                                    </td>
+                                    <td class="px-6 py-4 font-mono text-xs">${s.roll_no}</td>
+                                    <td class="px-6 py-4 text-right">
+                                        <button class="text-blue-500 hover:text-blue-700"><i class="fas fa-edit"></i></button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } catch (err) {
+                list.innerHTML = `<div class="p-6 text-center text-slate-400">Failed to load directory.</div>`;
+            }
+        }
+    </script>
 </body>
-
 </html>
